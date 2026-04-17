@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Dragon Fly</title>
+    <!-- 
+    VIBE-TO-SPEC JSON:
+    {
+      "blueprint": {
+        "app_type": "Arcade Game",
+        "modules": ["GameLoop", "ScoreSystem"],
+        "screens": ["Start", "Game", "GameOver"]
+      },
+      "screen_specs": [
+        {
+          "screen_id": "game_screen",
+          "visual_style": "playful",
+          "emphasis": "focus",
+          "title": "Dragon Fly",
+          "subtitle": "Tap to fly high",
+          "primary_action": { "label": "Start Game", "type": "button", "result": "startGame" },
+          "components": [
+            { "type": "canvas", "props": { "content": "game_render" } },
+            { "type": "score", "props": { "value": "current_score" } }
+          ]
+        }
+      ]
+    }
+    -->
+    <style>
+        :root {
+            --primary: #FF4757; /* Dragon Red */
+            --secondary: #2ED573; /* Pipe Green */
+            --bg: #70A1FF; /* Sky Blue */
+            --dark: #2F3542;
+            --light: #FFFFFF;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none; /* Prevents zooming/scrolling on mobile */
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--dark);
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #app-container {
+            width: 100%;
+            height: 100%;
+            max-width: 480px; /* Mobile width cap */
+            background-color: var(--bg);
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        /* HEADER UI */
+        header {
+            position: absolute;
+            top: 20px;
+            left: 0;
+            width: 100%;
+            text-align: center;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        h1 {
+            color: var(--light);
+            font-size: 2rem;
+            text-shadow: 2px 2px 0 var(--dark);
+            margin-bottom: 4px;
+        }
+
+        p {
+            color: var(--light);
+            font-size: 1rem;
+            opacity: 0.9;
+            text-shadow: 1px 1px 0 var(--dark);
+        }
+
+        /* HERO / CANVAS */
+        #game-canvas {
+            flex: 1;
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        /* OVERLAYS */
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(47, 53, 66, 0.7);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 20;
+            transition: opacity 0.3s;
+        }
+
+        .hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .card {
+            background: var(--light);
+            padding: 30px;
+            border-radius: 20px;
+            text-align: center;
+            width: 80%;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+
+        .score-big {
+            font-size: 3rem;
+            font-weight: bold;
+            color: var(--primary);
+            margin: 10px 0;
+        }
+
+        /* STICKY CTA BUTTON */
+        button {
+            background-color: var(--primary);
+            color: var(--light);
+            border: none;
+            padding: 16px 32px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 4px 0 #b33939; /* Darker red */
+            transition: transform 0.1s;
+            margin-top: 20px;
+            outline: none;
+        }
+
+        button:active {
+            transform: translateY(4px);
+            box-shadow: none;
+        }
+
+        #score-hud {
+            position: absolute;
+            top: 15%;
+            width: 100%;
+            text-align: center;
+            font-size: 4rem;
+            color: rgba(255, 255, 255, 0.4);
+            font-weight: bold;
+            z-index: 5;
+            pointer-events: none;
+            display: none;
+        }
+
+    </style>
+</head>
+<body>
+
+<div id="app-container">
+    <header id="main-header">
+        <h1>Dragon Fly</h1>
+        <p>Tap to survive</p>
+    </header>
+
+    <div id="score-hud">0</div>
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Start Screen -->
+    <div id="start-screen" class="overlay">
+        <div class="card">
+            <h2>Ready to Fly?</h2>
+            <p>Don't hit the walls!</p>
+            <button onclick="startGame()">Start Game</button>
+        </div>
+    </div>
+
+    <!-- Game Over Screen -->
+    <div id="game-over-screen" class="overlay hidden">
+        <div class="card">
+            <h2>Game Over</h2>
+            <p>Score</p>
+            <div class="score-big" id="final-score">0</div>
+            <button onclick="resetGame()">Try Again</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- CONFIG ---
+    const canvas = document.getElementById('game-canvas');
+    const ctx = canvas.getContext('2d');
+    const scoreHud = document.getElementById('score-hud');
+    const finalScoreEl = document.getElementById('final-score');
+    const startScreen = document.getElementById('start-screen');
+    const gameOverScreen = document.getElementById('game-over-screen');
+    const header = document.getElementById('main-header');
+
+    let frames = 0;
+    let score = 0;
+    let gameId = null;
+    let state = 'START'; // START, PLAYING, GAMEOVER
+
+    // Resize canvas
+    function resize() {
+        canvas.width = canvas.parentElement.offsetWidth;
+        canvas.height = canvas.parentElement.offsetHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // --- GAME ENTITIES ---
+    const dragon = {
+        x: 50,
+        y: 150,
+        radius: 15,
+        velocity: 0,
+        gravity: 0.25,
+        jump: 4.6,
+        
+        draw: function() {
+            // Body
+            ctx.fillStyle = '#FF4757'; // Red Dragon
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Eye
+            ctx.fillStyle = '#FFF';
+            ctx.beginPath();
+            ctx.arc(this.x + 8, this.y - 4, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(this.x + 10, this.y - 4, 2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Wing (Visual cue for flapping)
+            ctx.fillStyle = '#a32a36';
+            ctx.beginPath();
+            ctx.moveTo(this.x - 5, this.y);
+            ctx.lineTo(this.x - 15, this.y - 10);
+            ctx.lineTo(this.x - 5, this.y + 5);
+            ctx.fill();
+        },
+        
+        update: function() {
+            this.velocity += this.gravity;
+            this.y += this.velocity;
+
+            // Floor collision
+            if (this.y + this.radius >= canvas.height) {
+                this.y = canvas.height - this.radius;
+                gameOver();
+            }
+            
+            // Ceiling collision (optional)
+            if (this.y - this.radius <= 0) {
+                this.y = this.radius;
+                this.velocity = 0;
+            }
+        },
+        
+        flap: function() {
+            this.velocity = -this.jump;
+        },
+
+        reset: function() {
+            this.y = canvas.height / 2;
+            this.velocity = 0;
+        }
+    };
+
+    const pipes = {
+        position: [],
+        w: 50,
+        h: 150, // Base height (not used directly, calculated randomly)
+        dx: 2, // Speed
+        gap: 140, // Increased gap for mobile playability
+        
+        draw: function() {
+            ctx.fillStyle = '#2ED573'; // Green Pipe
+            for (let i = 0; i < this.position.length; i++) {
+                let p = this.position[i];
+                let topY = p.y;
+                let bottomY = p.y + this.h + this.gap;
+                
+                // Top Pipe
+                ctx.fillRect(p.x, 0, this.w, topY);
+                // Cap
+                ctx.fillRect(p.x - 2, topY - 20, this.w + 4, 20);
+
+                // Bottom Pipe
+                ctx.fillRect(p.x, topY + this.gap, this.w, canvas.height - (topY + this.gap));
+                // Cap
+                ctx.fillRect(p.x - 2, topY + this.gap, this.w + 4, 20);
+            }
+        },
+        
+        update: function() {
+            // Add new pipe every 150 frames
+            if (frames % 150 === 0) {
+                // Random position logic
+                // Max pipe height
+                let maxPos = canvas.height - this.gap - 50;
+                let minPos = 50;
+                let y = Math.floor(Math.random() * (maxPos - minPos + 1)) + minPos;
+                
+                this.position.push({
+                    x: canvas.width,
+                    y: y - this.gap // adjusting so y is the bottom of the top pipe
+                });
+            }
+
+            for (let i = 0; i < this.position.length; i++) {
+                let p = this.position[i];
+                p.x -= this.dx;
+
+                // Collision Logic
+                // Dragon Box (Simple AABB approximation)
+                let dLeft = dragon.x - dragon.radius + 5;
+                let dRight = dragon.x + dragon.radius - 5;
+                let dTop = dragon.y - dragon.radius + 5;
+                let dBottom = dragon.y + dragon.radius - 5;
+
+                // Pipe Box
+                let pLeft = p.x;
+                let pRight = p.x + this.w;
+                let topPipeBottom = p.y; // Bottom of top pipe
+                let bottomPipeTop = p.y + this.gap; // Top of bottom pipe
+
+                // Check X overlap
+                if (dRight > pLeft && dLeft < pRight) {
+                    // Check Y overlap (Hit Top OR Hit Bottom)
+                    if (dTop < topPipeBottom || dBottom > bottomPipeTop) {
+                        gameOver();
+                    }
+                }
+
+                // Score Logic
+                if (p.x + this.w < dragon.x && !p.passed) {
+                    score++;
+                    scoreHud.innerText = score;
+                    p.passed = true;
+                }
+
+                // Remove off-screen
+                if (p.x + this.w <= 0) {
+                    this.position.shift();
+                    i--; // adjust index
+                }
+            }
+        },
+
+        reset: function() {
+            this.position = [];
+        }
+    };
+
+    // --- GAME LOOP ---
+    function loop() {
+        if (state !== 'PLAYING') return;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Background elements (Cloud)
+        ctx.fillStyle = '#a6cfff';
+        ctx.beginPath();
+        ctx.arc(100 - (frames % canvas.width), 100, 30, 0, Math.PI * 2);
+        ctx.arc(140 - (frames % canvas.width), 100, 40, 0, Math.PI * 2);
+        ctx.arc(180 - (frames % canvas.width), 100, 30, 0, Math.PI * 2);
+        ctx.fill();
+
+        pipes.update();
+        pipes.draw();
+        
+        dragon.update();
+        dragon.draw();
+        
+        frames++;
+        gameId = requestAnimationFrame(loop);
+    }
+
+    // --- CONTROLS ---
+    function startGame() {
+        state = 'PLAYING';
+        startScreen.classList.add('hidden');
+        gameOverScreen.classList.add('hidden');
+        header.style.opacity = '0';
+        scoreHud.style.display = 'block';
+        scoreHud.innerText = '0';
+        
+        score = 0;
+        frames = 0;
+        dragon.reset();
+        pipes.reset();
+        
+        loop();
+    }
+
+    function gameOver() {
+        state = 'GAMEOVER';
+        finalScoreEl.innerText = score;
+        gameOverScreen.classList.remove('hidden');
+        scoreHud.style.display = 'none';
+        header.style.opacity = '1';
+        cancelAnimationFrame(gameId);
+    }
+
+    function resetGame() {
+        startGame();
+    }
+
+    // Input Handling
+    function inputAction(e) {
+        if (state === 'PLAYING') {
+            dragon.flap();
+        }
+        // Prevent default touch behaviors (like zoom)
+        if (e.type === 'touchstart') {
+            // e.preventDefault(); // Sometimes blocks click, handled by css touch-action: none
+        }
+    }
+
+    window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space') inputAction(e);
+    });
+
+    canvas.addEventListener('mousedown', inputAction);
+    canvas.addEventListener('touchstart', inputAction, {passive: false});
+
+    // Initial Render
+    ctx.fillStyle = '#70A1FF';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    dragon.reset();
+    dragon.draw();
+
+</script>
+</body>
+</html>
